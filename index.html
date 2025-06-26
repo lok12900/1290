@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>글로벌 재난 경보 및 대피소 안내 앱</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+     
+    <style>
+        .leaflet-container { height: 100%; width: 100%; cursor: default; }
+        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        html.dark { background-color: #111827; color: #f3f4f6; }
+        .fade-in { animation: fadeIn 0.5s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .user-marker .pulse { animation: pulse 2s infinite; stroke-width: 2; stroke: #3b82f6; fill: #3b82f6; }
+        @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.7; } 70% { transform: scale(1.4); opacity: 0; } 100% { transform: scale(0.95); opacity: 0; } }
+        
+        .refresh-indicator.refreshing { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+
+    <div id="root"></div>
+
+    <script src="https://unpkg.com/react@17/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef, Fragment } = React;
+        
+        // --- 아이콘 컴포넌트 ---
+        const Icon = ({ path, className = '', size = 24 }) => ( <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg> );
+        const Shield = (props) => <Icon {...props} path={<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>} />;
+        const Siren = (props) => <Icon {...props} path={<Fragment><path d="M7 12a5 5 0 0 1 10 0v6H7v-6Z"/><path d="M5 20a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3H5v3Z"/><path d="M12 12V2l-4 4-4-4"/><path d="m12 12 4 4 4-4"/></Fragment>} />;
+        const Search = (props) => <Icon {...props} path={<Fragment><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Fragment>} />;
+        const LifeBuoy = (props) => <Icon {...props} path={<Fragment><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/><path d="m19.07 4.93-4.24 4.24"/></Fragment>} />;
+        const X = (props) => <Icon {...props} path={<Fragment><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Fragment>} />;
+        const Menu = (props) => <Icon {...props} path={<Fragment><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></Fragment>} />;
+        const Sun = (props) => <Icon {...props} path={<Fragment><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 6.34-1.41 1.41"/></Fragment>} />;
+        const Moon = (props) => <Icon {...props} path={<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>} />;
+        const AlertCircle = (props) => <Icon {...props} path={<Fragment><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></Fragment>} />;
+        const MessageSquare = (props) => <Icon {...props} path={<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>} />;
+        const BookOpen = (props) => <Icon {...props} path={<Fragment><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></Fragment>} />;
+        const Sparkles = (props) => <Icon {...props} path={<path d="m12 3-1.9 5.8-5.8 1.9 5.8 1.9L12 21l1.9-5.8 5.8-1.9-5.8-1.9L12 3z" />} />;
+        const Navigation = (props) => <Icon {...props} path={<path d="M12 2L2 22l10-4 10 4Z"/>} />;
+        const RefreshCw = (props) => <Icon {...props} path={<Fragment><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></Fragment>} />;
+
+        // --- 지도 마커 아이콘 생성 ---
+        const createUserIcon = () => { const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" class="user-marker"><circle cx="12" cy="12" r="10" class="pulse"/><path d="M20 9v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9" fill="none" stroke="#fff" stroke-width="1.5" /><path d="M4 11.25a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3.25a2 2 0 0 1-2 2" fill="#3b82f6" stroke="#fff" stroke-width="1.5" /><path d="m2 11 10-9 10 9" fill="none" stroke="#fff" stroke-width="1.5" /></svg>`; return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 16] }); }
+        const createShelterIcon = (color, isOfficial = false) => { const officialBadge = isOfficial ? `<circle cx="20" cy="5" r="4" fill="#FFD700" stroke="white" stroke-width="1"/>` : ''; const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="${color}" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15.5C4 14.67 4.67 14 5.5 14h13c.83 0 1.5.67 1.5 1.5v5c0 .83-.67 1.5-1.5 1.5h-13c-.83 0-1.5-.67-1.5-1.5v-5Z"/><path d="M2 15.5V9a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v6.5"/><path d="m12 9-8 6.5"/><path d="m12 9 8 6.5"/>${officialBadge}</svg>`; return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -32] }); };
+        const createDisasterIcon = () => { const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="#f43f5e" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>`; return L.divIcon({ html: svg, className: '', iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -32] }); }
+        const userLocationIcon = createUserIcon(); const disasterIcon = createDisasterIcon(); const shelterIcon = createShelterIcon('#808080'); const officialShelterIcon = createShelterIcon('#3b82f6', true);
+
+        // --- UI 컴포넌트 ---
+        const Modal = ({ children, onClose }) => ( <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}><div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-lg w-full fade-in" onClick={(e) => e.stopPropagation()}>{children}</div></div> );
+        const Notification = ({ message, type, onClose }) => { const colors = { info: 'bg-blue-500', error: 'bg-rose-500' }; useEffect(() => { const timer = setTimeout(() => onClose(), 5000); return () => clearTimeout(timer); }, []); return ( <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[1001] flex items-center p-4 rounded-lg shadow-xl text-white ${colors[type] || 'bg-gray-800'} fade-in`}><AlertCircle className="mr-3" /><span>{message}</span><button onClick={onClose} className="ml-4"><X size={20} /></button></div> ); };
+        const InfoModal = ({ title, icon, color, children, onClose }) => (<Modal onClose={onClose}><div className="flex justify-between items-center mb-4"><h3 className={`text-xl font-bold ${color} flex items-center`}>{icon} {title}</h3><button onClick={onClose} className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"><X size={24} /></button></div><div className="space-y-3 text-sm text-gray-700 dark:text-gray-300 max-h-[60vh] overflow-y-auto pr-2">{children}</div></Modal>);
+        const DisasterInfo = ({ event, onClose, onGeneratePlan }) => (<InfoModal title={event.title} icon={<Siren className="w-5 h-5 mr-2" />} color="text-rose-500" onClose={onClose}><p><strong>종류:</strong> {event.categories[0].title}</p>{event.sources && event.sources[0] && ( <p><strong>출처:</strong> <a href={event.sources[0].url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{event.sources[0].id}</a></p> )}<p className="text-xs text-gray-500 dark:text-gray-400 pt-2 border-t mt-2">{new Date(event.geometries[0].date).toLocaleString('ko-KR')}</p><button onClick={() => onGeneratePlan(event)} className="w-full mt-4 inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg hover:opacity-90 transition-opacity shadow">✨ AI로 맞춤형 대피 계획 생성</button></InfoModal>);
+        const KoreanDisasterInfo = ({ message, onClose, onGeneratePlan }) => (<InfoModal title="재난문자 상세 정보" icon={<MessageSquare className="w-6 h-6 mr-2" />} color="text-cyan-500" onClose={onClose}><p><strong>수신 지역:</strong> {message.location_name}</p><p><strong>발송 시간:</strong> {message.create_date}</p><div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700"><strong>내용:</strong><p className="whitespace-pre-wrap mt-1">{message.msg}</p></div><button onClick={() => onGeneratePlan(message)} className="w-full mt-4 inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-lg hover:opacity-90 transition-opacity shadow">✨ AI로 맞춤형 대피 계획 생성</button></InfoModal>);
+        const EvacuationGuide = ({ onClose }) => (<InfoModal title="재난 대피 가이드" icon={<LifeBuoy className="w-6 h-6 mr-2" />} color="text-blue-500" onClose={onClose}><p><strong>[공통]</strong></p><p><strong>1. 침착하게 행동하기:</strong> 당황하지 말고, 주변 상황을 신속하게 파악하세요.</p><p><strong>2. 정보 확인:</strong> TV, 라디오, 재난 문자 등을 통해 공식적인 재난 정보를 지속적으로 확인하세요. <a href="http://www.safekorea.go.kr" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">국민재난안전포털</a>을 참고하세요.</p><p><strong>3. 대피 준비:</strong> 비상용품(물, 비상식량, 구급약품, 손전등 등)을 챙겨 대피할 준비를 하세요.</p><p><strong>4. 전기 및 가스 차단:</strong> 대피하기 전, 화재 등 2차 피해를 막기 위해 전기와 가스를 차단하세요.</p><p><strong>5. 안전한 대피로 이용:</strong> 지정된 대피로나 안전한 길을 이용하세요. 엘리베이터는 절대 사용하지 마세요.</p></InfoModal>);
+        const MapLegend = ({ onClose }) => (<InfoModal title="지도 범례" icon={<BookOpen className="w-5 h-5 mr-2" />} color="text-gray-700 dark:text-gray-200" onClose={onClose}><div className="space-y-3"><div className="flex items-center"><div className="w-8 h-8 mr-3 flex items-center justify-center" dangerouslySetInnerHTML={{ __html: createUserIcon().options.html }} /><span>나의 위치</span></div><div className="flex items-center"><div className="w-8 h-8 mr-3 flex items-center justify-center" dangerouslySetInnerHTML={{ __html: createDisasterIcon().options.html }} /><span>재난 발생 위치</span></div><div className="flex items-center"><div className="w-8 h-8 mr-3 flex items-center justify-center" dangerouslySetInnerHTML={{ __html: officialShelterIcon.options.html }} /><span>대한민국 공식 대피소</span></div><div className="flex items-center"><div className="w-8 h-8 mr-3 flex items-center justify-center" dangerouslySetInnerHTML={{ __html: shelterIcon.options.html }} /><span>일반 대피소 (OSM)</span></div></div></InfoModal>);
+        const AIPlanModal = ({ plan, onClose }) => (<InfoModal title="AI 맞춤형 대피 계획" icon={<Sparkles className="w-6 h-6 mr-2 text-yellow-400" />} color="text-purple-500" onClose={onClose}> {plan.loading ? <div className="flex justify-center items-center h-24"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div></div> : <p className="whitespace-pre-wrap">{plan.content}</p>} </InfoModal>);
+
+        function App() {
+          const [userPosition, setUserPosition] = useState([35.1796, 129.0756]);
+          const [mapCenter, setMapCenter] = useState([35.1796, 129.0756]);
+          const [zoom, setZoom] = useState(7);
+          const [disasters, setDisasters] = useState([]);
+          const [koreanDisasters, setKoreanDisasters] = useState([]);
+          const [shelters, setShelters] = useState([]);
+          const [loading, setLoading] = useState('');
+          const [isRefreshing, setIsRefreshing] = useState({ global: false, korean: false });
+          const [notification, setNotification] = useState(null);
+          const [activeModal, setActiveModal] = useState(null);
+          const [modalData, setModalData] = useState(null);
+          const [isSidebarOpen, setSidebarOpen] = useState(true);
+          const [darkMode, setDarkMode] = useState(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          const [routeLayer, setRouteLayer] = useState(null);
+          
+          const mapRef = useRef();
+          const mapInstance = useRef(null);
+          const markersLayer = useRef(L.layerGroup());
+          const isMounted = useRef(false);
+
+          useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; } }, []);
+          useEffect(() => { document.documentElement.classList.toggle('dark', darkMode); if (mapInstance.current) { const tileLayer = mapInstance.current._layers[Object.keys(mapInstance.current._layers).find(key => mapInstance.current._layers[key] instanceof L.TileLayer)]; if (tileLayer) { tileLayer.setUrl(darkMode ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"); } } }, [darkMode]);
+          useEffect(() => { if (!mapRef.current || mapInstance.current) return; L.Icon.Default.mergeOptions({ iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png', iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png', shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png' }); mapInstance.current = L.map(mapRef.current).setView(userPosition, zoom); L.tileLayer(darkMode ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(mapInstance.current); markersLayer.current.addTo(mapInstance.current); }, []);
+          useEffect(() => { mapInstance.current && mapInstance.current.setView(mapCenter, zoom); }, [mapCenter, zoom]);
+          useEffect(() => { if (!mapInstance.current) return; markersLayer.current.clearLayers(); L.marker(userPosition, {icon: userLocationIcon}).addTo(markersLayer.current).bindPopup('현재 나의 위치'); disasters.forEach(event => { L.marker([event.geometries[0].coordinates[1], event.geometries[0].coordinates[0]], { icon: disasterIcon }).addTo(markersLayer.current).bindPopup(`<b>${event.title}</b><br/><button onclick="window.showDisasterDetails('${event.id}')" class="mt-1 text-blue-500 font-bold">상세보기</button>`); }); shelters.forEach(shelter => { L.marker(shelter.position, { icon: shelter.isOfficial ? officialShelterIcon : shelterIcon }).addTo(markersLayer.current).bindPopup(`<b>${shelter.isOfficial ? '[공식]' : '[일반]'} ${shelter.name}</b><br/>${shelter.full_address}<br/><button onclick="window.getDirections(${shelter.position[0]}, ${shelter.position[1]})" class="mt-1 text-blue-500 font-bold">길찾기</button>`); }); window.showDisasterDetails = (eventId) => { const event = disasters.find(d => d.id === eventId); if (event) { setModalData(event); setActiveModal('disaster'); } }; window.getDirections = (lat, lng) => getDirections([lat, lng]); }, [userPosition, disasters, shelters]);
+
+          const safeApiCall = async (url, serviceName) => {
+              if (!isMounted.current) return null;
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => { controller.abort(); console.warn(`${serviceName} 요청 시간 초과.`); }, 15000);
+              setLoading(prev => [...new Set([...prev.split(',').filter(Boolean), serviceName])].join(', '));
+              try {
+                  const response = await fetch(url, { signal: controller.signal });
+                  clearTimeout(timeoutId);
+                  if (!response.ok) throw new Error(`API 서버 에러 (상태: ${response.status})`);
+                  const responseText = await response.text();
+                  try { return JSON.parse(responseText); } catch (e) { throw new Error('API 응답이 유효한 JSON 형식이 아닙니다.'); }
+              } catch (error) {
+                  console.warn(`${serviceName} 정보 로딩 중 문제가 발생했습니다:`, error.message);
+                  if (isMounted.current) setNotification({type: 'error', message: `${serviceName} 정보 로딩에 실패했습니다.`});
+                  return null;
+              } finally {
+                  if(isMounted.current) setLoading(prev => prev.split(', ').filter(s => s.trim() !== serviceName).join(', '));
+              }
+          };
+
+          const generateAiPlan = async (disasterData) => {
+              setActiveModal('aiPlan');
+              setModalData({ loading: true, content: '' });
+              let prompt;
+              if (disasterData.geometries) { prompt = `당신은 재난 대비 전문가입니다. 다음 정보를 바탕으로 한국 사용자를 위한 간결하고 실행 가능한 단계별 대피 계획을 한국어로 생성해 주세요.\n\n- 사용자 현재 위치: 위도 ${userPosition[0]}, 경도 ${userPosition[1]}\n- 재난 유형: ${disasterData.categories[0].title}\n- 재난 발생 위치: 위도 ${disasterData.geometries[0].coordinates[1]}, 경도 ${disasterData.geometries[0].coordinates[0]}\n- 재난명: ${disasterData.title}\n\n가장 중요한 조치부터 시작하고, 비상 상황에서 이해하기 쉽게 작성해주세요.`; } else { prompt = `당신은 재난 대비 전문가입니다. 다음 재난 문자를 바탕으로 한국 사용자를 위한 간결하고 실행 가능한 단계별 행동 요령을 한국어로 생성해 주세요.\n\n- 사용자 현재 위치: 위도 ${userPosition[0]}, 경도 ${userPosition[1]}\n- 재난 문자 내용: "${disasterData.msg}"\n- 수신 지역: ${disasterData.location_name}\n\n가장 중요한 조치부터 시작하고, 비상 상황에서 이해하기 쉽게 작성해주세요.`; }
+              const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] }; const apiKey = ""; const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+              try {
+                  const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                  if (!response.ok) throw new Error(`Gemini API 에러: ${response.status}`);
+                  const result = await response.json();
+                  if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+                      const text = result.candidates[0].content.parts[0].text;
+                      if (isMounted.current) setModalData({ loading: false, content: text });
+                  } else { throw new Error("Gemini API로부터 유효한 응답을 받지 못했습니다."); }
+              } catch (error) { console.error("AI 계획 생성 실패:", error); if (isMounted.current) { setModalData({ loading: false, content: "AI 대피 계획 생성에 실패했습니다. 잠시 후 다시 시도해 주세요." }); setNotification({ type: 'error', message: 'AI 계획 생성에 실패했습니다.' }); } }
+          };
+          
+          const fetchAllData = async (isAutoRefresh = false) => {
+              if(!isMounted.current) return;
+              if(isAutoRefresh) setIsRefreshing({ global: true, korean: true });
+              const [globalData, koreanData] = await Promise.all([ safeApiCall('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&days=30', '전세계 재난'), safeApiCall(`https://apis.data.go.kr/1741000/DisasterMsg3/getDisasterMsg1List?serviceKey=E3cyV2aGkOLS5s6M922S6k4S34V3aJ6pA2Sj2pbnxSg9hJd9fN4Yp4RImM4dNIaA5bJd2t7z2xKqwrsotqZ4SA%3D%3D&pageNo=1&numOfRows=20&type=json`, '국내 재난문자') ]);
+              if (globalData && globalData.events && isMounted.current) { setDisasters(globalData.events.filter(e => e && e.id && e.title && e.categories && e.categories[0] && e.geometries && e.geometries[0] && e.geometries[0].type === 'Point' && Array.isArray(e.geometries[0].coordinates) && e.geometries[0].coordinates.length === 2)); }
+              if (koreanData && koreanData.DisasterMsg && koreanData.DisasterMsg[1] && koreanData.DisasterMsg[1].row && isMounted.current) { setKoreanDisasters(koreanData.DisasterMsg[1].row); }
+              if(isAutoRefresh) setTimeout(() => { if(isMounted.current) setIsRefreshing({ global: false, korean: false })}, 500);
+            };
+
+          useEffect(() => {
+            const geoOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+            navigator.geolocation.getCurrentPosition( (position) => { if (isMounted.current) { setUserPosition([position.coords.latitude, position.coords.longitude]); setMapCenter([position.coords.latitude, position.coords.longitude]); setZoom(13); } }, (error) => { console.warn("위치 정보 권한 거부됨.", error); if (isMounted.current) { setNotification({type: 'error', message: '위치 정보를 가져올 수 없어 기본 위치로 시작합니다.'}); } }, geoOptions );
+            fetchAllData();
+            const interval = setInterval(() => fetchAllData(true), 60000); // 1분마다 자동 갱신
+            return () => clearInterval(interval);
+          }, []);
+
+          const findShelters = async () => {
+              if (!mapInstance.current || !isMounted.current || loading) return;
+              setShelters([]);
+              const mapBounds = mapInstance.current.getBounds();
+              const [korData, osmData] = await Promise.all([ safeApiCall(`https://apis.data.go.kr/1741000/TsunamiShelter3/getTsunamiShelterList3?serviceKey=E3cyV2aGkOLS5s6M922S6k4S34V3aJ6pA2Sj2pbnxSg9hJd9fN4Yp4RImM4dNIaA5bJd2t7z2xKqwrsotqZ4SA%3D%3D&pageNo=1&numOfRows=1000&type=json`, '공식 대피소'), safeApiCall(`https://nominatim.openstreetmap.org/search?q=shelter&format=json&viewbox=${mapBounds.toBBoxString()}&bounded=1&limit=30`, '일반 대피소') ]);
+              let allShelters = [];
+              if (korData && korData.TsunamiShelter && korData.TsunamiShelter[1] && korData.TsunamiShelter[1].row) { allShelters = allShelters.concat(korData.TsunamiShelter[1].row.filter(item => item.lat && item.lon && mapBounds.contains([parseFloat(item.lat), parseFloat(item.lon)])).map(item => ({ id: `kor-${item.id}`, name: item.shel_nm, position: [parseFloat(item.lat), parseFloat(item.lon)], full_address: item.address, isOfficial: true, }))); }
+              if (osmData && Array.isArray(osmData)) { allShelters = allShelters.concat(osmData.map(item => ({ id: `osm-${item.osm_id}`, name: item.display_name.split(',')[0], position: [parseFloat(item.lat), parseFloat(item.lon)], full_address: item.display_name, isOfficial: false, }))); }
+              if (isMounted.current) { const uniqueShelters = allShelters.filter((shelter, index, self) => index === self.findIndex((s) => (s.name === shelter.name && s.position[0].toFixed(3) === shelter.position[0].toFixed(3) && s.position[1].toFixed(3) === shelter.position[1].toFixed(3)))); setShelters(uniqueShelters); if (uniqueShelters.length === 0) setNotification({type: 'info', message: '현재 지도 범위에서 대피소를 찾지 못했습니다.'}); }
+          };
+
+          const getDirections = async (destination) => {
+              if(!mapInstance.current) return;
+              setLoading('경로 검색중...');
+              const start = userPosition;
+              const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${destination[1]},${destination[0]}?overview=full&geometries=geojson`;
+
+              try {
+                  const response = await fetch(url);
+                  if(!response.ok) throw new Error("경로 정보를 가져올 수 없습니다.");
+                  const data = await response.json();
+                  if(data.routes && data.routes.length > 0){
+                      if(routeLayer) routeLayer.remove();
+                      const newRouteLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#0ea5e9', weight: 5, opacity: 0.7 } }).addTo(mapInstance.current);
+                      mapInstance.current.fitBounds(newRouteLayer.getBounds());
+                      setRouteLayer(newRouteLayer);
+                  } else {
+                      setNotification({ type: 'error', message: '경로를 찾을 수 없습니다.' });
+                  }
+              } catch(error) {
+                  console.error("길찾기 실패: ", error);
+                  setNotification({ type: 'error', message: '길찾기 서비스에 오류가 발생했습니다.' });
+              } finally {
+                  setLoading('');
+              }
+          }
+          
+          return (
+            <div className={`flex h-screen font-sans text-gray-800 dark:text-gray-200 ${darkMode ? 'dark' : ''}`}>
+              {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
+              
+              <aside className={`absolute md:relative z-30 h-full bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-lg p-4 flex flex-col transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 w-80 md:w-96`}>
+                <div className="flex justify-between items-center mb-4"><h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400 flex items-center"><Shield className="w-7 h-7 mr-2"/> 재난안전지킴이</h1><button onClick={() => setSidebarOpen(false)} className="md:hidden text-gray-600 dark:text-gray-300"><X size={24} /></button></div>
+                <div className="flex space-x-2 mb-4">
+                  <button onClick={findShelters} className="flex-1 inline-flex items-center justify-center px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow disabled:bg-blue-300" disabled={!!loading}><Search className="w-4 h-4 mr-2" /> 주변 대피소 찾기</button>
+                  {routeLayer && <button onClick={() => { routeLayer.remove(); setRouteLayer(null); }} className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow"><X size={20}/></button>}
+                </div>
+                <div className="flex-grow overflow-y-auto scrollbar-hide space-y-4">
+                  <div>
+                    <h2 className="text-lg font-semibold mb-2 text-cyan-500 dark:text-cyan-400 flex items-center"><MessageSquare className="w-5 h-5 mr-2" />국내 실시간 재난문자<RefreshCw size={16} className={`ml-2 text-gray-400 ${isRefreshing.korean ? 'refreshing' : ''}`} /></h2>
+                    <div className="space-y-2 max-h-60 overflow-y-auto scrollbar-hide">
+                      {koreanDisasters.length > 0 ? (koreanDisasters.map(msg => (<div key={msg.md101_sn} onClick={() => {setModalData(msg); setActiveModal('koreanDisaster');}} className="p-3 rounded-lg cursor-pointer bg-gray-50 dark:bg-gray-700 hover:bg-cyan-100 dark:hover:bg-gray-600 transition-colors"><p className="font-semibold text-sm truncate">{msg.msg}</p><p className="text-xs text-gray-500 dark:text-gray-400">{msg.location_name} - {msg.create_date}</p></div>))) : (<div className="text-center p-4 text-sm text-gray-500">수신된 재난문자가 없습니다.</div>)}
+                    </div>
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold mb-2 text-rose-500 dark:text-rose-400 flex items-center"><Siren className="w-5 h-5 mr-2" />전세계 재난 정보 (30일)<RefreshCw size={16} className={`ml-2 text-gray-400 ${isRefreshing.global ? 'refreshing' : ''}`} /></h2>
+                    <div className="space-y-2 max-h-60 overflow-y-auto scrollbar-hide">
+                      {disasters.length > 0 ? (disasters.map(event => (<div key={event.id} onClick={() => {setModalData(event); setActiveModal('disaster');}} className="p-3 rounded-lg cursor-pointer bg-gray-50 dark:bg-gray-700 hover:bg-rose-100 dark:hover:bg-gray-600 transition-colors"><p className="font-semibold text-sm">{event.title}</p><p className="text-xs text-gray-500 dark:text-gray-400">{event.categories[0].title} - {new Date(event.geometries[0].date).toLocaleDateString('ko-KR')}</p></div>))) : (<div className="text-center p-4 text-sm text-gray-500">활성화된 재난 정보가 없습니다.</div>)}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700"><button onClick={() => setDarkMode(d => !d)} className="w-full flex items-center justify-center p-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">{darkMode ? <Sun className="w-5 h-5 mr-2" /> : <Moon className="w-5 h-5 mr-2" />}{darkMode ? '라이트 모드' : '다크 모드'}</button></div>
+              </aside>
+
+              <main className="flex-1 flex flex-col relative">
+                <button onClick={() => setSidebarOpen(true)} className={`md:hidden absolute top-4 left-4 z-20 p-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-full shadow-lg ${isSidebarOpen ? 'hidden' : ''}`}><Menu size={24} /></button>
+                <button onClick={() => setActiveModal('legend')} className="absolute top-4 right-4 z-20 p-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-full shadow-lg"><BookOpen size={24} /></button>
+                {loading && (<div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-black/50 text-white p-4 rounded-lg flex items-center shadow-xl"><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3"></div>{loading}</div>)}
+                {activeModal === 'disaster' && <DisasterInfo event={modalData} onClose={() => setActiveModal(null)} onGeneratePlan={generateAiPlan} />}
+                {activeModal === 'koreanDisaster' && <KoreanDisasterInfo message={modalData} onClose={() => setActiveModal(null)} onGeneratePlan={generateAiPlan} />}
+                {activeModal === 'guide' && <EvacuationGuide onClose={() => setActiveModal(null)} />}
+                {activeModal === 'legend' && <MapLegend onClose={() => setActiveModal(null)} />}
+                {activeModal === 'aiPlan' && <AIPlanModal plan={modalData} onClose={() => setActiveModal(null)} />}
+                <div ref={mapRef} className="w-full h-full z-10"></div>
+              </main>
+            </div>
+          );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
